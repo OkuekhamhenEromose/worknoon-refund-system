@@ -15,9 +15,7 @@ A fully containerized full-stack assessment implementation for Worknoon's AI-pow
 - Phase 7 — customer refund interface: complete.
 - Phase 8 — support/admin dashboard: complete.
 - Phase 9 — security, edge-case tests, and health verification: complete.
-- Phase 10 — final Docker/E2E verification: complete in the working environment; rerun the final verification script before submission.
-- Phase 11 — final hardening: complete.
-- Phase 12 — submission packaging and technical-review preparation: complete.
+- Phase 10 — final Docker/E2E verification: ready for local execution.
 
 ## Architecture
 
@@ -243,19 +241,13 @@ Copy `.env.example` to `.env` and provide a valid AI key only if you want live G
 
 Do not commit `.env`.
 
+## Supporting documentation
 
-## Final submission workflow
+Additional assessment documents are in [`docs/`](docs/):
 
-The final hardening pass adds additional API edge-case coverage, explicit AI risk-signal escalation, a reusable frontend API boundary, and a support detail view for AI response/reasoning and audit events.
-
-Run the Windows verification helper before recording the demo:
-
-```powershell
-.\scripts\verify.ps1
-```
-
-The complete demo and technical-review checklist is in `docs/SUBMISSION_CHECKLIST.md`.
-
-### Assessment boundary
-
-This repository uses synthetic customer/order data only. The AI provider is an assistive component, not the source of truth for hard refund policy. Any production deployment would require authentication, authorization, rate limiting, HTTPS, managed secrets, observability, and stronger privacy controls.
+- [`SUBMISSION_CHECKLIST.md`](docs/SUBMISSION_CHECKLIST.md) — final repository, Docker, API, frontend, AI, demo, and GitHub checks.
+- [`ARCHITECTURE.md`](docs/ARCHITECTURE.md) — system structure and decision flow.
+- [`API.md`](docs/API.md) — endpoint and outcome reference.
+- [`DEMO.md`](docs/DEMO.md) — short recording/demo script.
+- [`SECURITY.md`](docs/SECURITY.md) — implemented controls and production limitations.
+- [`TEST_PLAN.md`](docs/TEST_PLAN.md) — automated and manual scenario coverage.
