@@ -1,30 +1,28 @@
 "use client";
 
 import { FormEvent, useEffect, useMemo, useState } from "react";
-
-const API = process.env.NEXT_PUBLIC_API_BASE_URL || "http://localhost:8000/api/v1";
+import { createRefundRequest, getRefundRequests, RefundRequestPayload } from "../lib/api";
 
 type Refund = {
   id: string;
   requested_amount: string;
   reason: string;
   status: string;
+  created_at: string;
   customer: { name: string; email: string };
-  order: { order_number: string; total_amount?: string; is_final_sale?: boolean };
-  order_item: { id: string; product_name: string; is_damaged?: boolean; is_incorrect?: boolean };
-  decision?: { outcome: string; reason_code: string; reason: string; ai_result: Record<string, unknown> };
-  audit_logs?: Array<{ event_type: string; message: string }>;
+  order: { order_number: string; total_amount?: string; currency?: string; status?: string; is_final_sale?: boolean };
+  order_item: { id: string; product_name: string; sku?: string; is_damaged?: boolean; is_incorrect?: boolean };
+  decision?: {
+    outcome: string;
+    reason_code: string;
+    reason: string;
+    policy_result?: Record<string, unknown>;
+    ai_result: Record<string, unknown>;
+  };
+  audit_logs?: Array<{ event_type: string; message: string; created_at?: string }>;
 };
 
-type FormState = {
-  customer_email: string;
-  order_number: string;
-  order_item_id: string;
-  requested_amount: string;
-  reason: string;
-};
-
-const emptyForm: FormState = {
+const emptyForm: RefundRequestPayload = {
   customer_email: "",
   order_number: "",
   order_item_id: "",
@@ -34,7 +32,8 @@ const emptyForm: FormState = {
 
 export default function Home() {
   const [requests, setRequests] = useState<Refund[]>([]);
-  const [form, setForm] = useState<FormState>(emptyForm);
+  const [form, setForm] = useState<RefundRequestPayload>(emptyForm);
+  const [selected, setSelected] = useState<Refund | null>(null);
   const [filter, setFilter] = useState("ALL");
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState("");
@@ -42,19 +41,12 @@ export default function Home() {
 
   async function load() {
     try {
-      const response = await fetch(`${API}/refunds/requests/`, { cache: "no-store" });
+      const response = await getRefundRequests();
       if (!response.ok) throw new Error(`Backend returned ${response.status}`);
       const data: Refund[] = await response.json();
       setRequests(data);
-      if (data.length && !form.order_item_id) {
-        const first = data[0];
-        setForm((current) => ({
-          ...current,
-          customer_email: first.customer.email,
-          order_number: first.order.order_number,
-          order_item_id: first.order_item.id,
-        }));
-      }
+      setSelected((current) => current ? data.find((item) => item.id === current.id) || current : null);
+      if (data.length && !form.order_item_id) selectRequest(data[0]);
       setApiError("");
     } catch (error) {
       setApiError(`Backend unavailable: ${String(error)}`);
@@ -76,6 +68,7 @@ export default function Home() {
   }), [requests]);
 
   function selectRequest(request: Refund) {
+    setSelected(request);
     setForm({
       customer_email: request.customer.email,
       order_number: request.order.order_number,
@@ -91,21 +84,21 @@ export default function Home() {
     setLoading(true);
     setMessage("");
     try {
-      const response = await fetch(`${API}/refunds/requests/`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(form),
-      });
+      const response = await createRefundRequest(form);
       const data = await response.json();
       if (!response.ok) throw new Error(data.detail || JSON.stringify(data));
       setMessage(`Decision: ${data.decision?.outcome}. ${data.decision?.reason}`);
-      setRequests((current) => [data, ...current]);
+      setSelected(data);
+      setRequests((current) => [data, ...current.filter((item) => item.id !== data.id)]);
     } catch (error) {
       setMessage(`Request failed: ${String(error)}`);
     } finally {
       setLoading(false);
     }
   }
+
+  const ai = selected?.decision?.ai_result || {};
+  const auditLogs = selected?.audit_logs || [];
 
   return (
     <main>
@@ -131,39 +124,65 @@ export default function Home() {
         <section className="card">
           <div className="card-heading"><div><p className="eyebrow">CUSTOMER FLOW</p><h2>Submit refund request</h2></div></div>
           <form onSubmit={submit}>
-            <label>Email<input required value={form.customer_email} onChange={(e) => setForm({ ...form, customer_email: e.target.value })} /></label>
+            <label>Email<input required type="email" value={form.customer_email} onChange={(e) => setForm({ ...form, customer_email: e.target.value })} /></label>
             <div className="row">
               <label>Order number<input required value={form.order_number} onChange={(e) => setForm({ ...form, order_number: e.target.value })} /></label>
               <label>Order item UUID<input required value={form.order_item_id} onChange={(e) => setForm({ ...form, order_item_id: e.target.value })} /></label>
             </div>
             <div className="row">
               <label>Amount<input required type="number" min="0.01" step="0.01" value={form.requested_amount} onChange={(e) => setForm({ ...form, requested_amount: e.target.value })} /></label>
-              <label>Expected policy limit<input value="$500 automatic approval" disabled /></label>
+              <label>Automatic approval limit<input value="$500" disabled /></label>
             </div>
             <label>Customer reason<textarea required maxLength={5000} value={form.reason} onChange={(e) => setForm({ ...form, reason: e.target.value })} /></label>
             <button disabled={loading}>{loading ? "Processing…" : "Process refund request"}</button>
           </form>
           {message && <div className="result"><strong>{message}</strong></div>}
-          <p className="muted">Select a seeded request from the dashboard to load valid customer/order/item identifiers automatically.</p>
+          <p className="muted">Select a seeded request from the dashboard to load valid customer, order, and item identifiers automatically.</p>
         </section>
 
         <section className="card">
           <div className="card-heading"><div><p className="eyebrow">SUPPORT DASHBOARD</p><h2>Recent requests</h2></div></div>
           <div className="filters">
-            {["ALL", "APPROVED", "DENIED", "ESCALATED"].map((value) => <button key={value} className={filter === value ? "filter active" : "filter"} onClick={() => setFilter(value)}>{value}</button>)}
+            {["ALL", "APPROVED", "DENIED", "ESCALATED"].map((value) => (
+              <button key={value} className={filter === value ? "filter active" : "filter"} onClick={() => setFilter(value)}>{value}</button>
+            ))}
           </div>
           {visibleRequests.length === 0 ? <p className="muted">No requests match this filter.</p> : visibleRequests.slice(0, 15).map((request) => (
-            <button className="request" key={request.id} onClick={() => selectRequest(request)}>
+            <button className={`request ${selected?.id === request.id ? "selected" : ""}`} key={request.id} onClick={() => selectRequest(request)}>
               <div className="request-top"><span className={`badge ${request.status.toLowerCase()}`}>{request.status}</span><strong>{request.order.order_number}</strong><span>${request.requested_amount}</span></div>
               <div>{request.customer.name} · {request.order_item.product_name}</div>
-              <div className="muted">{request.decision?.reason_code}: {request.decision?.reason}</div>
-              {request.decision?.ai_result && Object.keys(request.decision.ai_result).length > 0 && <div className="ai-note">AI analysis available · {String(request.decision.ai_result.classification || "classified")}</div>}
+              <div className="muted">{request.decision?.reason_code || "PENDING"}: {request.decision?.reason || "Awaiting processing"}</div>
             </button>
           ))}
         </section>
       </div>
 
-      <footer>Hard policy rules remain authoritative. AI output is validated and cannot override DENIED or ESCALATED policy outcomes.</footer>
+      <section className="detail-grid">
+        <section className="card">
+          <p className="eyebrow">DECISION DETAIL</p>
+          <h2>{selected ? selected.order.order_number : "Select a request"}</h2>
+          {selected ? (
+            <>
+              <div className="detail-row"><span>Outcome</span><strong className={`badge ${selected.status.toLowerCase()}`}>{selected.status}</strong></div>
+              <div className="detail-row"><span>Policy reason</span><strong>{selected.decision?.reason_code || "PENDING"}</strong></div>
+              <p>{selected.decision?.reason || "This seeded request has not been processed yet."}</p>
+              {typeof ai.customer_response === "string" && <div className="customer-response"><p className="eyebrow">AI CUSTOMER RESPONSE</p><p>{ai.customer_response}</p></div>}
+              {typeof ai.reasoning_summary === "string" && <p className="muted"><strong>AI reasoning:</strong> {ai.reasoning_summary}</p>}
+              {Array.isArray(ai.risk_flags) && ai.risk_flags.length > 0 && <p className="risk"><strong>Risk flags:</strong> {ai.risk_flags.join(", ")}</p>}
+            </>
+          ) : <p className="muted">Use the request list to inspect policy, AI, and audit information.</p>}
+        </section>
+
+        <section className="card">
+          <p className="eyebrow">AUDIT TRAIL</p>
+          <h2>Workflow events</h2>
+          {auditLogs.length === 0 ? <p className="muted">No audit events available for this request.</p> : auditLogs.map((log, index) => (
+            <div className="audit" key={`${log.event_type}-${index}`}><strong>{log.event_type}</strong><span>{log.message}</span></div>
+          ))}
+        </section>
+      </section>
+
+      <footer>Hard policy rules remain authoritative. AI output is validated, risk signals are auditable, and AI cannot override hard policy decisions.</footer>
     </main>
   );
 }
