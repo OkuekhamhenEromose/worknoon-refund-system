@@ -10,4 +10,5 @@ def test_health_endpoint():
     assert response.json() == {
         "status": "ok",
         "service": "worknoon-refund-backend",
+        "database": "ok",
     }
