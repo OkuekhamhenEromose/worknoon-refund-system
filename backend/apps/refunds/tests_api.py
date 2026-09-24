@@ -164,3 +164,13 @@ class RefundRequestAPITests(APITestCase):
 
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
         self.assertIn("requested_amount", response.data)
+
+    @patch("apps.refunds.services.decision_service.analyze_refund_request")
+    def test_ai_failure_escalates_and_audits(self, mock_ai):
+        from apps.refunds.services.ai_service import AIServiceError
+        mock_ai.side_effect = AIServiceError("provider unavailable")
+        response = self.client.post(self.url, self.payload(), format="json")
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        self.assertEqual(response.data["status"], RefundRequest.Status.ESCALATED)
+        self.assertEqual(response.data["decision"]["reason_code"], RefundDecision.ReasonCode.AI_UNAVAILABLE)
+        self.assertTrue(any(log["event_type"] == "AI_FAILED" for log in response.data["audit_logs"]))

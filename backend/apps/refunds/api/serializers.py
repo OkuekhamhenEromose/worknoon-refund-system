@@ -1,3 +1,5 @@
+from decimal import Decimal
+
 from rest_framework import serializers
 
 from apps.audit.models import AuditLog
@@ -8,7 +10,7 @@ class RefundRequestCreateSerializer(serializers.Serializer):
     customer_email = serializers.EmailField()
     order_number = serializers.CharField(max_length=40)
     order_item_id = serializers.UUIDField()
-    requested_amount = serializers.DecimalField(max_digits=12, decimal_places=2, min_value=0.01)
+    requested_amount = serializers.DecimalField(max_digits=12, decimal_places=2, min_value=Decimal("0.01"))
     reason = serializers.CharField(max_length=5000, allow_blank=False, trim_whitespace=True)
 
 
