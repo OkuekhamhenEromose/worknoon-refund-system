@@ -35,3 +35,24 @@ def test_ai_result_rejects_unknown_classification():
             "reasoning_summary": "x",
             "customer_response": "y",
         })
+
+
+def test_ai_result_rejects_missing_required_fields():
+    with pytest.raises(AIServiceError):
+        AIResult.from_dict({
+            "classification": "DAMAGED_ITEM",
+            "confidence": 0.8,
+            "risk_flags": [],
+            "reasoning_summary": "Only the response is missing.",
+        })
+
+
+def test_ai_result_rejects_non_string_risk_flag():
+    with pytest.raises(AIServiceError):
+        AIResult.from_dict({
+            "classification": "DAMAGED_ITEM",
+            "confidence": 0.8,
+            "risk_flags": ["ok", 123],
+            "reasoning_summary": "The item appears damaged.",
+            "customer_response": "We can review the request.",
+        })

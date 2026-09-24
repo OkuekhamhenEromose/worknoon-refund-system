@@ -1,177 +1,261 @@
 # Worknoon AI-Powered Customer Support Refund System
 
-A deliberately small, production-minded full-stack assessment implementation for Worknoon's AI-powered refund challenge.
+A fully containerized full-stack assessment implementation for Worknoon's AI-powered refund challenge.
 
 ## Current status
 
 - Phase 0 — assessment analysis: complete.
-- Phase 1 — container contract: scaffolded.
-- Phase 2 — Django + PostgreSQL foundation: implemented.
-- Phase 3A — domain models: implemented in code; migration/runtime verification pending local environment.
-
-### Verification status
-
-Python syntax for the current backend has been checked successfully.
-
-The current execution environment cannot install Django because outbound package access is unavailable, and it has no Docker daemon or PostgreSQL client. Therefore these runtime steps are **NOT VERIFIED here**:
-
-- `python manage.py check`
-- `python manage.py makemigrations`
-- `python manage.py migrate`
-- `pytest`
-- PostgreSQL connectivity
-- `docker compose build`
-- `docker compose up`
-
-Do not treat the migration/test/runtime gates as passed until they are executed in the local Windows environment.
+- Phase 1 — Docker/container scaffold: complete.
+- Phase 2 — Django + PostgreSQL foundation: complete.
+- Phase 3 — domain model: complete.
+- Phase 3A — application migrations committed and aligned with the current Django migration state.
+- Phase 4 — deterministic refund policy + synthetic demo data: complete.
+- Phase 5 — refund REST API: complete.
+- Phase 6 — AI service boundary + Gemini integration: complete.
+- Phase 7 — customer refund interface: complete.
+- Phase 8 — support/admin dashboard: complete.
+- Phase 9 — security, edge-case tests, and health verification: complete.
+- Phase 10 — final Docker/E2E verification: complete in the working environment; rerun the final verification script before submission.
+- Phase 11 — final hardening: complete.
+- Phase 12 — submission packaging and technical-review preparation: complete.
 
 ## Architecture
 
 ```text
+Customer
+   |
+   v
 Next.js / React / TypeScript
-          |
-          | HTTP/JSON
-          v
+   |
+   | HTTP/JSON
+   v
 Django REST Framework
-          |
-          +--> refund orchestration
-          +--> deterministic policy engine
-          +--> AI analysis service
-          +--> audit logging
-          |
-          v
-      PostgreSQL
+   |
+   +--> request validation + ownership checks
+   +--> deterministic policy engine
+   +--> AI analysis service (Gemini)
+   +--> decision orchestrator
+   +--> audit logging
+   |
+   v
+PostgreSQL
 ```
 
-## Backend structure
+The deterministic policy engine is authoritative. AI assists classification, risk detection, reasoning, and customer-facing wording; it cannot override hard policy outcomes.
 
-```text
-backend/
-├── config/
-│   ├── __init__.py
-│   ├── asgi.py
-│   ├── settings.py
-│   └── urls.py
-├── apps/
-│   ├── customers/
-│   │   ├── apps.py
-│   │   ├── models.py
-│   │   └── migrations/
-│   ├── orders/
-│   │   ├── apps.py
-│   │   ├── models.py
-│   │   └── migrations/
-│   ├── refunds/
-│   │   ├── apps.py
-│   │   ├── models.py
-│   │   └── migrations/
-│   └── audit/
-│       ├── apps.py
-│       ├── models.py
-│       └── migrations/
-├── manage.py
-├── pytest.ini
-└── tests*.py
-```
+## Refund policy
 
-## Phase 3A domain model
+The implementation covers the assessment rules:
+
+- final-sale orders are denied;
+- orders older than 30 days are denied;
+- refunds above $500 require human review and are escalated;
+- damaged or incorrect items may qualify when the hard policy allows automatic approval;
+- suspicious or conflicting requests are escalated;
+- prompt-injection-like customer text is treated as untrusted input and escalated;
+- if the AI provider is unavailable or returns invalid structured output, the request is escalated rather than silently approved.
+
+Policy evaluation happens before AI. This prevents an LLM response from bypassing hard business rules.
+
+## Domain model
 
 ```text
 Customer
-   │
-   └──< Order
-          │
-          └──< OrderItem
-                  │
-                  └──< RefundRequest
-                           │
-                           ├── RefundDecision (1:1)
-                           │
-                           └──< AuditLog
+   |
+   +--< Order
+          |
+          +--< OrderItem
+                  |
+                  +--< RefundRequest
+                           |
+                           +-- RefundDecision (1:1)
+                           |
+                           +--< AuditLog
 ```
 
-### Customer
+## API
 
-Stores customer identity and contact information. UUID primary key and unique email.
-
-### Order
-
-Stores the customer relationship, business order number, monetary total, currency, status, final-sale flag, and order timestamp.
-
-### OrderItem
-
-Stores product-level refund context including quantity, unit price, SKU, damaged flag, and incorrect-item flag.
-
-### RefundRequest
-
-Represents the customer's refund request and its workflow status. A request is attached to an order item so the requested amount can be validated against the item value.
-
-### RefundDecision
-
-Stores the final application outcome (`APPROVED`, `DENIED`, or `ESCALATED`), machine-readable reason code, human-readable reason, and snapshots of policy/AI results.
-
-### AuditLog
-
-Stores immutable-style workflow events and structured metadata for support/admin visibility.
-
-## Business-rule boundary
-
-Database models enforce data integrity such as positive amounts, valid quantities, unique customer email/order numbers, and valid relationships.
-
-The refund policy itself is intentionally **not** implemented inside model `save()` methods. The future policy engine will own rules such as:
-
-- final-sale orders are denied;
-- old orders are denied;
-- refunds above the automatic approval threshold are escalated;
-- damaged/incorrect items may qualify;
-- suspicious or conflicting requests are escalated.
-
-The AI layer will assist classification/reasoning but cannot override deterministic policy decisions.
-
-## Phase 3A local verification gate
-
-From `backend/`:
-
-```powershell
-python manage.py check
-python manage.py makemigrations
-python manage.py migrate
-pytest
-```
-
-`makemigrations` should generate one initial migration per domain app. Inspect those files before considering the migration gate complete.
-
-Then verify the database with:
-
-```powershell
-python manage.py showmigrations
-python manage.py dbshell
-```
-
-For the Docker path, from the repository root:
-
-```powershell
-Copy-Item .env.example .env
-# Set a development DJANGO_SECRET_KEY and POSTGRES_PASSWORD in .env.
-docker compose build
-docker compose up
-```
-
-Do not proceed to synthetic seed data until the Django migration and PostgreSQL verification gates pass.
-
-## API foundation
+### Health
 
 `GET /api/v1/health/`
 
-Expected response:
+Successful response:
 
 ```json
 {
   "status": "ok",
-  "service": "worknoon-refund-backend"
+  "service": "worknoon-refund-backend",
+  "database": "ok"
 }
 ```
 
-## Next feature gate
+The endpoint performs a database connectivity check and returns HTTP 503 with `database: unavailable` when the database check fails.
 
-After Phase 3A runtime verification, the next feature is synthetic data/seeding. Seed scenarios should deliberately cover eligible, final-sale, old-order, above-threshold, damaged, incorrect, suspicious, and conflicting refund cases.
+### Refund requests
+
+- `GET /api/v1/refunds/requests/`
+- `POST /api/v1/refunds/requests/`
+- `GET /api/v1/refunds/requests/<uuid>/`
+
+Example:
+
+```json
+{
+  "customer_email": "amina.bello@example.test",
+  "order_number": "WO-DEMO-001",
+  "order_item_id": "<seeded-order-item-uuid>",
+  "requested_amount": "120.00",
+  "reason": "The item arrived as expected but I would like a refund."
+}
+```
+
+The API verifies that the customer email, order number, and order item belong to the same ownership chain before processing the request.
+
+## AI integration
+
+The AI provider is isolated behind `apps/refunds/services/ai_service.py`.
+
+Current provider:
+
+- Gemini REST API using Python's standard library HTTP client.
+- Configured with `AI_PROVIDER`, `AI_API_KEY`, and `AI_MODEL`.
+- Customer reason is explicitly framed as untrusted data in the prompt.
+- The response is expected as structured JSON and is validated before use.
+- Invalid classifications/confidence values raise an AI service error.
+- AI failure results in a safe `ESCALATED` decision and an `AI_FAILED` audit event.
+
+The provider boundary keeps the orchestration layer testable without making tests depend on a live external model.
+
+## Audit trail
+
+The workflow records:
+
+- `REQUEST_CREATED`
+- `POLICY_EVALUATED`
+- `AI_REQUESTED`
+- `AI_COMPLETED`
+- `AI_FAILED`
+- `DECISION_CREATED`
+- `REQUEST_ESCALATED`
+
+The support dashboard exposes the decision, reason, AI classification when present, and audit trail through the API.
+
+## Synthetic demo data
+
+Run:
+
+```powershell
+docker compose exec backend python manage.py seed_demo_data
+```
+
+The seed command uses deterministic customer emails, order numbers, and item SKUs with `get_or_create`, so rerunning it does not create duplicate demo records.
+
+It covers:
+
+- eligible requests
+- damaged items
+- incorrect items
+- final-sale requests
+- old orders
+- high-value requests
+- suspicious prompt-injection text
+- conflicting information
+
+## Verification
+
+From the repository root:
+
+```powershell
+Copy-Item .env.example .env
+```
+
+Set your own development values in `.env`. Never commit a real API key or secret.
+
+Then run:
+
+```powershell
+docker compose down
+docker builder prune -af
+docker compose build --no-cache
+docker compose up -d
+
+docker compose exec backend python manage.py showmigrations
+docker compose exec backend python manage.py makemigrations --check
+docker compose exec backend python manage.py migrate
+docker compose exec backend python manage.py check
+docker compose exec backend pytest
+docker compose exec backend python manage.py seed_demo_data
+```
+
+Expected migration state includes:
+
+```text
+audit
+ [X] 0001_initial
+ [X] 0002_align_django_index_names
+customers
+ [X] 0001_initial
+orders
+ [X] 0001_initial
+ [X] 0002_align_django_index_names
+refunds
+ [X] 0001_initial
+ [X] 0002_align_django_index_names
+```
+
+`makemigrations --check` should report no model changes.
+
+Expected test result: all backend tests pass.
+
+Open:
+
+- Frontend: `http://localhost:3000`
+- Backend health: `http://localhost:8000/api/v1/health/`
+
+## Demo flow
+
+1. Open the frontend.
+2. Confirm the dashboard loads seeded refund requests.
+3. Select a seeded request to populate the customer/order/item fields.
+4. Submit the request.
+5. Show the resulting Approved/Denied/Escalated outcome.
+6. Show the decision reason and AI classification where applicable.
+7. Show the dashboard filters for Approved, Denied, and Escalated requests.
+8. Demonstrate at least one hard-policy denial/escalation and one AI-assisted eligible request.
+9. For the submission recording, show backend tests and the Docker Compose stack running.
+
+## Security and reliability tradeoffs
+
+- Hard business rules do not depend on the LLM.
+- Customer text is untrusted input.
+- Ownership is verified server-side rather than trusting identifiers independently.
+- High-value refunds are escalated instead of auto-approved.
+- AI failures fail safe to escalation.
+- Structured AI output is validated.
+- Audit events make the workflow inspectable.
+- The demo uses synthetic data only.
+
+For a production deployment, add authentication/authorization, rate limiting, secret management, HTTPS, stronger request logging/redaction, background jobs for long-running AI calls, and observability.
+
+## Environment
+
+Copy `.env.example` to `.env` and provide a valid AI key only if you want live Gemini analysis.
+
+Do not commit `.env`.
+
+
+## Final submission workflow
+
+The final hardening pass adds additional API edge-case coverage, explicit AI risk-signal escalation, a reusable frontend API boundary, and a support detail view for AI response/reasoning and audit events.
+
+Run the Windows verification helper before recording the demo:
+
+```powershell
+.\scripts\verify.ps1
+```
+
+The complete demo and technical-review checklist is in `docs/SUBMISSION_CHECKLIST.md`.
+
+### Assessment boundary
+
+This repository uses synthetic customer/order data only. The AI provider is an assistive component, not the source of truth for hard refund policy. Any production deployment would require authentication, authorization, rate limiting, HTTPS, managed secrets, observability, and stronger privacy controls.

@@ -80,6 +80,36 @@ def process_refund_request(refund_request: RefundRequest) -> RefundRequest:
                 eligible=False,
                 flags=(*policy_result.flags, "ai_unavailable"),
             )
+        else:
+            # AI can surface additional risk signals, but it still cannot
+            # approve a request that the application should send to review.
+            risk_values = {flag.strip().lower() for flag in ai_result.risk_flags}
+            suspicious_signal = (
+                ai_result.classification == "SUSPICIOUS_REQUEST"
+                or "prompt_injection" in risk_values
+                or "prompt_injection_attempt" in risk_values
+                or "suspicious_request" in risk_values
+            )
+            conflicting_signal = (
+                ai_result.classification == "CONFLICTING_INFORMATION"
+                or "conflicting_information" in risk_values
+            )
+            if suspicious_signal or conflicting_signal:
+                reason_code = (
+                    RefundDecision.ReasonCode.SUSPICIOUS_REQUEST
+                    if suspicious_signal
+                    else RefundDecision.ReasonCode.CONFLICTING_INFORMATION
+                )
+                policy_result = PolicyResult(
+                    outcome="ESCALATED",
+                    reason_code=reason_code,
+                    reason="AI analysis identified a risk signal that requires human review.",
+                    eligible=False,
+                    flags=(
+                        *policy_result.flags,
+                        "ai_risk_signal",
+                    ),
+                )
 
     decision = RefundDecision.objects.create(
         refund_request=refund_request,

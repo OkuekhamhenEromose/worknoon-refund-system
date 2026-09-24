@@ -174,3 +174,73 @@ class RefundRequestAPITests(APITestCase):
         self.assertEqual(response.data["status"], RefundRequest.Status.ESCALATED)
         self.assertEqual(response.data["decision"]["reason_code"], RefundDecision.ReasonCode.AI_UNAVAILABLE)
         self.assertTrue(any(log["event_type"] == "AI_FAILED" for log in response.data["audit_logs"]))
+
+
+    @patch("apps.refunds.services.decision_service.analyze_refund_request")
+    def test_ai_risk_signal_escalates_even_when_policy_is_eligible(self, mock_ai):
+        mock_ai.return_value = AIResult(
+            classification="SUSPICIOUS_REQUEST",
+            confidence=0.99,
+            risk_flags=("prompt_injection_attempt",),
+            reasoning_summary="The message contains instruction-like content.",
+            customer_response="Your request requires human review.",
+        )
+        response = self.client.post(self.url, self.payload(), format="json")
+
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        self.assertEqual(response.data["status"], RefundRequest.Status.ESCALATED)
+        self.assertEqual(
+            response.data["decision"]["reason_code"],
+            RefundDecision.ReasonCode.SUSPICIOUS_REQUEST,
+        )
+        self.assertEqual(
+            response.data["decision"]["ai_result"]["classification"],
+            "SUSPICIOUS_REQUEST",
+        )
+
+
+    def test_old_order_is_denied(self):
+        self.order.ordered_at = timezone.now() - timedelta(days=31)
+        self.order.save(update_fields=["ordered_at"])
+        response = self.client.post(self.url, self.payload(), format="json")
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        self.assertEqual(response.data["status"], RefundRequest.Status.DENIED)
+        self.assertEqual(response.data["decision"]["reason_code"], RefundDecision.ReasonCode.ORDER_TOO_OLD)
+
+    @patch("apps.refunds.services.decision_service.analyze_refund_request")
+    def test_damaged_item_can_be_approved(self, mock_ai):
+        mock_ai.return_value = self.successful_ai_result()
+        self.item.is_damaged = True
+        self.item.save(update_fields=["is_damaged"])
+        response = self.client.post(self.url, self.payload(reason="The item arrived damaged."), format="json")
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        self.assertEqual(response.data["status"], RefundRequest.Status.APPROVED)
+        self.assertEqual(response.data["decision"]["reason_code"], RefundDecision.ReasonCode.DAMAGED_ITEM)
+
+    @patch("apps.refunds.services.decision_service.analyze_refund_request")
+    def test_incorrect_item_can_be_approved(self, mock_ai):
+        mock_ai.return_value = self.successful_ai_result()
+        self.item.is_incorrect = True
+        self.item.save(update_fields=["is_incorrect"])
+        response = self.client.post(self.url, self.payload(reason="I received the wrong item."), format="json")
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        self.assertEqual(response.data["status"], RefundRequest.Status.APPROVED)
+        self.assertEqual(response.data["decision"]["reason_code"], RefundDecision.ReasonCode.INCORRECT_ITEM)
+
+    def test_conflicting_information_is_escalated(self):
+        self.item.is_damaged = True
+        self.item.save(update_fields=["is_damaged"])
+        response = self.client.post(self.url, self.payload(reason="The item was not damaged when it arrived."), format="json")
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        self.assertEqual(response.data["status"], RefundRequest.Status.ESCALATED)
+        self.assertEqual(response.data["decision"]["reason_code"], RefundDecision.ReasonCode.CONFLICTING_INFORMATION)
+
+    def test_missing_customer_is_rejected_without_creating_request(self):
+        response = self.client.post(self.url, self.payload(customer_email="missing@example.com"), format="json")
+        self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
+        self.assertEqual(RefundRequest.objects.count(), 0)
+
+    def test_list_status_filter_is_case_insensitive(self):
+        response = self.client.get(self.url + "?status=approved")
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data, [])
