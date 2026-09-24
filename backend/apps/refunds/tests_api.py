@@ -1,6 +1,8 @@
 from datetime import timedelta
 from decimal import Decimal
 
+from unittest.mock import patch
+
 from django.urls import reverse
 from django.utils import timezone
 from rest_framework import status
@@ -9,6 +11,7 @@ from rest_framework.test import APITestCase
 from apps.customers.models import Customer
 from apps.orders.models import Order, OrderItem
 from apps.refunds.models import RefundDecision, RefundRequest
+from apps.refunds.services.ai_service import AIResult
 
 
 class RefundRequestAPITests(APITestCase):
@@ -34,6 +37,15 @@ class RefundRequestAPITests(APITestCase):
         )
         self.url = reverse("refund-request-list-create")
 
+    def successful_ai_result(self):
+        return AIResult(
+            classification="GENERAL_REFUND",
+            confidence=0.93,
+            risk_flags=(),
+            reasoning_summary="The customer provided a normal refund request.",
+            customer_response="Your refund request has been approved under the refund policy.",
+        )
+
     def payload(self, **overrides):
         payload = {
             "customer_email": self.customer.email,
@@ -45,7 +57,9 @@ class RefundRequestAPITests(APITestCase):
         payload.update(overrides)
         return payload
 
-    def test_create_refund_request_approves_eligible_request(self):
+    @patch("apps.refunds.services.decision_service.analyze_refund_request")
+    def test_create_refund_request_approves_eligible_request(self, mock_ai):
+        mock_ai.return_value = self.successful_ai_result()
         response = self.client.post(self.url, self.payload(), format="json")
 
         self.assertEqual(response.status_code, status.HTTP_201_CREATED)
@@ -126,7 +140,9 @@ class RefundRequestAPITests(APITestCase):
         self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
         self.assertEqual(RefundRequest.objects.count(), 0)
 
-    def test_detail_endpoint_returns_decision_and_audit_trail(self):
+    @patch("apps.refunds.services.decision_service.analyze_refund_request")
+    def test_detail_endpoint_returns_decision_and_audit_trail(self, mock_ai):
+        mock_ai.return_value = self.successful_ai_result()
         create_response = self.client.post(self.url, self.payload(), format="json")
         detail_url = reverse(
             "refund-request-detail",
